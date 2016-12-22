@@ -25,10 +25,9 @@ shinyServer(function(input, output, session) {
     if (is.null (inFile1)) {
       return (NULL)
     } else {
-      inFile1 %>% rowwise() %>%
-        do({
-          read.csv(.$datapath, stringsAsFactors = FALSE, fileEncoding = "UTF-8")
-        }) %>% return
+      lapply(inFile1$datapath, function(k) {
+        read.csv(k, fileEncoding = "big5", stringsAsFactors = FALSE) 
+      }) %>% rbind.fill %>% setDT %>% return
     }
   })
   
@@ -40,7 +39,7 @@ shinyServer(function(input, output, session) {
       if (is.null (inFile2)) {
         return(NULL)
       } else {
-        read.csv(inFile2$datapath, fileEncoding = "UTF-8",
+        read.csv(inFile2$datapath, fileEncoding = input$dataformat,
                  stringsAsFactors = FALSE) %>% return
       }
     }
@@ -85,6 +84,8 @@ shinyServer(function(input, output, session) {
                detection := TRUE]
     arrival[, itemname := gsub("?", "", itemname, fixed = TRUE)]
     arrival <- arrival[as.Date(arrival) <= Sys.Date()]
+    arrival[, Expect := strsplit(Expect, "/") %>%
+              lapply(., function(k) { paste(k[2], k[3], sep = "/")}) %>% unlist]
     
     # transfer the PreorderingHint into date format
     preordering.hint <- str_extract_all(mutatedata$預購提示, "\\d*\\/\\d*")
@@ -93,7 +94,7 @@ shinyServer(function(input, output, session) {
     
     # Launching filtering process
     detectlist <- lapply(1 : nrow(arrival), function(k) {
-      grepl(arrival$itemname[k], mutatedata$商品名稱) &
+      grepl(arrival$itemname[k], mutatedata$商品名稱, fixed = TRUE) &
       grepl(arrival$spec[k], mutatedata$選項, ignore.case = TRUE) &
       grepl(arrival$Expect[k], mutatedata$expectedarrival)
     })
