@@ -13,6 +13,7 @@ library(data.table)
 library(googlesheets)
 library(shinyjs)
 library(stringr)
+library(checkenc)
 
 shinyServer(function(input, output, session) {
   
@@ -25,8 +26,9 @@ shinyServer(function(input, output, session) {
     if (is.null (inFile1)) {
       return (NULL)
     } else {
+      coding <- lapply(inFile1$datapath, checkenc) %>% unlist %>% unique
       lapply(inFile1$datapath, function(k) {
-        read.csv(k, fileEncoding = "big5", stringsAsFactors = FALSE) 
+        read.csv(k, fileEncoding = coding, stringsAsFactors = FALSE) 
       }) %>% rbind.fill %>% setDT %>% return
     }
   })
@@ -39,7 +41,8 @@ shinyServer(function(input, output, session) {
       if (is.null (inFile2)) {
         return(NULL)
       } else {
-        read.csv(inFile2$datapath, fileEncoding = input$dataformat,
+        FileCoding <- checkenc(inFile2$datapath)
+        read.csv(inFile2$datapath, fileEncoding = FileCoding,
                  stringsAsFactors = FALSE) %>% return
       }
     }
@@ -80,12 +83,13 @@ shinyServer(function(input, output, session) {
     mutatedata <- mutatedata[訂單號碼 %in% tmpfile[V1 == TRUE, 訂單號碼]]
     
     # Starting to judge if the preorder item have arrived
-    mutatedata[!(grepl("預購", 商品名稱) | grepl("預購", 選項)), 
-               detection := TRUE]
+    mutatedata[! (grepl("預購", 商品名稱) | grepl("預購", 選項)) | 
+                    grepl("現貨", 選項), detection := TRUE]
     arrival[, itemname := gsub("?", "", itemname, fixed = TRUE)]
     arrival <- arrival[as.Date(arrival) <= Sys.Date()]
     arrival[, Expect := strsplit(Expect, "/") %>%
               lapply(., function(k) { paste(k[2], k[3], sep = "/")}) %>% unlist]
+    arrival[is.na(spec), spec := ""]
     
     # transfer the PreorderingHint into date format
     preordering.hint <- str_extract_all(mutatedata$預購提示, "\\d*\\/\\d*")

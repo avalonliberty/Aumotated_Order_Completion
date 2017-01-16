@@ -25,9 +25,8 @@ shinyUI(fluidPage(
                        textInput("googleurl", "請輸入google試算表網址或
                                  檔案名稱")),
       conditionalPanel(condition = "input.google == 'No'",
-                       fileInput("supportfile","到貨日期資料", accept = ".csv"),
-                       radioButtons("dataformat", "到貨日期資料編碼",
-                                    c("UTF-8","big5"))),
+                       fileInput("supportfile","到貨日期資料", accept = ".csv")
+                       ),
       conditionalPanel(condition = "input.google != ''",
                        actionButton("Launch", "執行", icon = icon("play"),
                                      width = "100%"),
