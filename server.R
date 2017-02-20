@@ -54,12 +54,16 @@ shinyServer(function(input, output, session) {
       } else if (grepl("^https", input$googleurl)) {
         options("googlesheets.httr_oauth_cache" = "gs_auth")
         gs_auth(new_user = TRUE)
-        gs_url(input$googleurl) %>% gs_read %>% setDT %>% 
+        gs_file1 <- gs_url(input$googleurl)
+        rbind.fill(gs_read(gs_file1, 1), gs_read(gs_file1, 2),
+                   gs_read(gs_file1, 3)) %>% setDT %>%
           .[is.na(spec), spec := ""] %>% return
       } else {
         options("googlesheets.httr_oauth_cache" = "gs_auth")
         gs_auth(new_user = TRUE)
-        gs_title(input$googleurl) %>% gs_read %>% setDT %>%
+        gs_file2 <- gs_title(input$googleurl)
+        rbind.fill(gs_read(gs_file2, 1), gs_read(gs_file2, 2),
+                   gs_read(gs_file2, 3)) %>% setDT %>%
           .[is.na(spec), spec := ""] %>% return
       }
     }
