@@ -83,7 +83,7 @@ shinyServer(function(input, output, session) {
     # extract the transactions with preorder item
     tmpfile <- mutatedata[, (grepl("預購", 商品名稱) | grepl("預購", 選項)) %>%
                             any , by = 訂單號碼]
-    Instocknum <- tmpfile[V1 == FALSE, 訂單號碼]
+    Instocknum <- tmpfile[V1 == FALSE, 訂單號碼] %>% as.character
     mutatedata <- mutatedata[訂單號碼 %in% tmpfile[V1 == TRUE, 訂單號碼]]
     
     # Starting to judge if the preorder item have arrived
@@ -96,7 +96,7 @@ shinyServer(function(input, output, session) {
     arrival[is.na(spec), spec := ""]
     
     # transfer the PreorderingHint into date format
-    preordering.hint <- str_extract_all(mutatedata$預購提示, "\\d*\\/\\d*")
+    preordering.hint <- str_extract_all(mutatedata$預購提示, "\\d+\\/\\d+")
     preordering.hint <- sapply(preordering.hint, function(k) { k[1][[1]] })
     mutatedata[, expectedarrival := preordering.hint]
     
@@ -111,7 +111,7 @@ shinyServer(function(input, output, session) {
     }
     mutatedata[is.na(detection), detection := FALSE]
     tmpfile <- mutatedata[, all(detection), 訂單號碼]
-    bookingID <- tmpfile[V1 == TRUE, 訂單號碼]
+    bookingID <- tmpfile[V1 == TRUE, 訂單號碼] %>% as.character
     ReadyToGo <- c(bookingID, Instocknum)
     salesdata[訂單號碼 %in% ReadyToGo] %>% return
   })
