@@ -91,24 +91,14 @@ shinyServer(function(input, output, session) {
                     grepl("現貨", 選項), detection := TRUE]
     arrival[, itemname := gsub("?", "", itemname, fixed = TRUE)]
     arrival <- arrival[as.Date(arrival) <= Sys.Date()]
-    arrival[, Expect := strsplit(Expect, "/") %>%
-              lapply(., function(k) { paste(k[2], k[3], sep = "/")}) %>% unlist]
     arrival[is.na(spec), spec := ""]
-    
-    # transfer the PreorderingHint into date format
-    preordering.hint <- str_extract_all(mutatedata$預購提示, "\\d+\\/\\d+")
-    preordering.hint <- sapply(preordering.hint, function(k) { k[1][[1]] })
-    mutatedata[, expectedarrival := preordering.hint]
     
     # Launching filtering process
     detectlist <- lapply(1 : nrow(arrival), function(k) {
       grepl(arrival$itemname[k], mutatedata$商品名稱, fixed = TRUE) &
-      grepl(arrival$spec[k], mutatedata$選項, ignore.case = TRUE) &
-      grepl(arrival$Expect[k], mutatedata$expectedarrival)
-    })
-    for (i in 1 : length(detectlist)) {
-      mutatedata[detectlist[[i]], detection := TRUE]
-    }
+      grepl(arrival$spec[k], mutatedata$選項, ignore.case = TRUE)
+    }) %>% lapply(., which)
+    sapply(detectlist, function(k) mutatedata[k, detection := TRUE])
     mutatedata[is.na(detection), detection := FALSE]
     tmpfile <- mutatedata[, all(detection), 訂單號碼]
     bookingID <- tmpfile[V1 == TRUE, 訂單號碼] %>% as.character
