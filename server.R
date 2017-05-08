@@ -8,7 +8,8 @@
 library(shiny)
 library(data.table)
 library(plyr)
-library(dplyr)
+library(pipeR)
+library(foreach)
 library(data.table)
 library(googlesheets)
 library(shinyjs)
@@ -26,10 +27,10 @@ shinyServer(function(input, output, session) {
     if (is.null (inFile1)) {
       return (NULL)
     } else {
-      coding <- lapply(inFile1$datapath, checkenc) %>% unlist %>% unique
+      coding <- lapply(inFile1$datapath, checkenc) %>>% unlist %>>% unique
       lapply(inFile1$datapath, function(k) {
         read.csv(k, fileEncoding = coding, stringsAsFactors = FALSE) 
-      }) %>% rbind.fill %>% setDT %>% return
+      }) %>>% rbind.fill %>>% setDT %>>% return
     }
   })
   
@@ -43,7 +44,7 @@ shinyServer(function(input, output, session) {
       } else {
         FileCoding <- checkenc(inFile2$datapath)
         read.csv(inFile2$datapath, fileEncoding = FileCoding,
-                 stringsAsFactors = FALSE) %>% return
+                 stringsAsFactors = FALSE) %>>% return
       }
     }
     
@@ -56,77 +57,78 @@ shinyServer(function(input, output, session) {
         gs_auth(new_user = TRUE)
         gs_file1 <- gs_url(input$googleurl)
         rbind.fill(gs_read(gs_file1, 1), gs_read(gs_file1, 2),
-                   gs_read(gs_file1, 3)) %>% setDT %>%
-          .[is.na(spec), spec := ""] %>% return
+                   gs_read(gs_file1, 3)) %>>% setDT %>>%
+          .[is.na(spec), spec := ""] %>>% return
       } else {
         options("googlesheets.httr_oauth_cache" = "gs_auth")
         gs_auth(new_user = TRUE)
         gs_file2 <- gs_title(input$googleurl)
         rbind.fill(gs_read(gs_file2, 1), gs_read(gs_file2, 2),
-                   gs_read(gs_file2, 3)) %>% setDT %>%
-          .[is.na(spec), spec := ""] %>% return
+                   gs_read(gs_file2, 3)) %>>% setDT %>>%
+          {.[is.na(spec), spec := ""]} %>>% return
       }
     }
   })
   
   # Manipulating on AOC procedure
   zoopy <- reactive({
-    salesdata <- datafile1() %>% setDT
-    arrival <- datafile2() %>% setDT
+    salesdata <- datafile1() %>>% setDT
+    arrival <- datafile2() %>>% setDT
     
     # Clean data which enclude processed transactions
-    salesdata[, `:=`(訂單日期 = first(訂單日期),
-                     訂單狀態 = first(訂單狀態),
-                     送貨狀態 = first(送貨狀態)) , by = 訂單號碼]
     mutatedata <- salesdata[!(訂單狀態 == "已取消" | 訂單狀態 == "已完成")]
     
     # extract the transactions with preorder item
-    tmpfile <- mutatedata[, (grepl("預購", 商品名稱) | grepl("預購", 選項)) %>%
+    tmpfile <- mutatedata[, (grepl("預購", 商品名稱) | grepl("預購", 選項)) %>>%
                             any , by = 訂單號碼]
-    Instocknum <- tmpfile[V1 == FALSE, 訂單號碼] %>% as.character
+    mutatedata[grepl("現貨", 選項), 這是預購商品嗎. := "Y"]
+    tmpfile <- mutatedata[, (這是預購商品嗎. == "Y") %>>% any, by = 訂單號碼]
+    Instocknum <- tmpfile[V1 == FALSE, 訂單號碼] %>>% as.character
     mutatedata <- mutatedata[訂單號碼 %in% tmpfile[V1 == TRUE, 訂單號碼]]
     
     # Starting to judge if the preorder item have arrived
-    mutatedata[! (grepl("預購", 商品名稱) | grepl("預購", 選項)) | 
-                    grepl("現貨", 選項), detection := TRUE]
-    arrival[, itemname := gsub("?", "", itemname, fixed = TRUE)]
+    mutatedata[這是預購商品嗎. == "N", detection := TRUE]
+    mutatedata[, 商品貨號 := str_replace_all(商品貨號, "\\[.*\\]", "") %>>%
+                 trimws]
     arrival <- arrival[as.Date(arrival) <= Sys.Date()]
     arrival[is.na(spec), spec := ""]
     
     # Launching filtering process
-    detectlist <- lapply(1 : nrow(arrival), function(k) {
-      grepl(arrival$itemname[k], mutatedata$商品名稱, fixed = TRUE) &
-      grepl(arrival$spec[k], mutatedata$選項, ignore.case = TRUE)
-    }) %>% lapply(., which)
-    sapply(detectlist, function(k) mutatedata[k, detection := TRUE])
+    
+    detectlist <- foreach(i = 1 : nrow(arrival)) %do% {
+      mutatedata$商品貨號 %in% arrival$SKU[i]
+    }
+    foreach(j = seq_along(detectlist)) %do% {
+      mutatedata[detectlist[[j]], detection := TRUE]
+    }
     mutatedata[is.na(detection), detection := FALSE]
     tmpfile <- mutatedata[, all(detection), 訂單號碼]
-    bookingID <- tmpfile[V1 == TRUE, 訂單號碼] %>% as.character
+    bookingID <- tmpfile[V1 == TRUE, 訂單號碼] %>>% as.character
     ReadyToGo <- c(bookingID, Instocknum)
-    salesdata[訂單號碼 %in% ReadyToGo] %>% return
+    salesdata[訂單號碼 %in% ReadyToGo] %>>% return
   })
   
   # Design delivery filtering UI
   output$AdditionalSelect1 <- renderUI({
     manipulation <- zoopy()
-    deliverymethod <- manipulation$送貨方式 %>% as.factor %>% levels %>% 
-      c("", .)
+    deliverymethod <- manipulation$送貨方式 %>>% as.factor %>>% levels %>>% 
+      { c("", .) }
     selectInput("delivery", "送貨方式", choices = deliverymethod)
   })
   
   # Design payment status filtering UI
   output$AdditionalSelect2 <- renderUI({
     manipulation <- zoopy()
-    paymentstatus <- manipulation$付款狀態 %>% as.factor %>% levels %>%
-      c("", .)
+    paymentstatus <- manipulation$付款狀態 %>>% as.factor %>>% levels %>>%
+      { c("", .) }
     selectInput("payment", "付款狀態", choices = paymentstatus)
   })
   
   # Design order status filtering UI
   output$AdditionalSelect3 <- renderUI({
     manipulation <- zoopy()
-    orderstatus <- manipulation$訂單狀態 %>% as.factor %>% levels %>%
-      c("", .)
+    orderstatus <- manipulation$訂單狀態 %>>% as.factor %>>% levels %>>%
+     { c("", .) }
     selectInput("order", "訂單狀態", choices = orderstatus)
   })
   
@@ -139,9 +141,9 @@ shinyServer(function(input, output, session) {
     if (delivery == "" & payment == "" & order == "") {
       return (issac)
     } else {
-      dvec <- c(delivery, payment, order) %>% .[!. == ""] %>%
+      dvec <- c(delivery, payment, order) %>>% {.[!. == ""]} %>>%
         paste(collapse = "&")
-      issac[parse(text = dvec) %>% eval] %>% return
+      issac[parse(text = dvec) %>>% eval] %>>% return
     }
   })
   
@@ -151,7 +153,7 @@ shinyServer(function(input, output, session) {
     relation1 <- paste("合計", input$relationship1, input$value1)
     if (input$relationship1 != "" & input$value1 != "") {
       skt1bengi[, 合計 := first(合計), 訂單號碼]
-      skt1bengi[parse(text = relation1) %>% eval] %>% return
+      skt1bengi[parse(text = relation1) %>>% eval] %>>% return
     } else {
       return (skt1bengi)
     }
@@ -162,9 +164,9 @@ shinyServer(function(input, output, session) {
     faker <- desertcamal()
     relation2 <- paste(".N", input$relationship2, input$value2)
     if (input$relationship2 != "" & input$value2 != "") {
-      tempnumber<- faker[, parse(text = relation2) %>% eval, 訂單號碼] %>% 
-        .[V1 == TRUE, 訂單號碼]
-      faker[訂單號碼 %in% tempnumber] %>% return
+      tempnumber<- faker[, parse(text = relation2) %>>% eval, 訂單號碼] %>>% 
+        {.[V1 == TRUE, 訂單號碼] }
+      faker[訂單號碼 %in% tempnumber] %>>% return
     } else {
       return (faker)
     }  
@@ -175,8 +177,8 @@ shinyServer(function(input, output, session) {
     greentea <- milktea()
     if (input$value3 != "" | input$value4 != "") {
       blacktea <- greentea[, (grepl(input$value3, 商品名稱) & 
-                              grepl(input$value4, 選項)) %>% any, 訂單號碼] 
-      greentea[訂單號碼 %in% blacktea[V1 == TRUE, 訂單號碼]] %>% return
+                              grepl(input$value4, 選項)) %>>% any, 訂單號碼] 
+      greentea[訂單號碼 %in% blacktea[V1 == TRUE, 訂單號碼]] %>>% return
     } else {
       return (greentea)
     } 
@@ -196,14 +198,14 @@ shinyServer(function(input, output, session) {
       outputselect <- blackmonkey()
       bookingidvector <- unique(outputselect$訂單號碼)
       data.table(ID = seq_along(bookingidvector),
-                 BookingID = bookingidvector) %>% return
+                 BookingID = bookingidvector) %>>% return
     } else {
       gugudan <- blackmonkey()
       gugudan <- gugudan[, .SD[1], 訂單號碼]
       gugudan[, c("訂單號碼", "訂單日期", "電郵", "電話號碼", "送貨方式",
                   "送貨狀態","付款狀態", "合計", "收件人", "地址.1", "地址.2",
                   "城市", "訂單備註", "郵政編號.如適用.", "門市名稱", 
-                  "全家服務編號...7.11.店號"), with = FALSE] %>% return
+                  "全家服務編號...7.11.店號"), with = FALSE] %>>% return
     }
   })
   
