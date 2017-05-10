@@ -56,16 +56,16 @@ shinyServer(function(input, output, session) {
         options("googlesheets.httr_oauth_cache" = "gs_auth")
         gs_auth(new_user = TRUE)
         gs_file1 <- gs_url(input$googleurl)
-        rbind.fill(gs_read(gs_file1, 1), gs_read(gs_file1, 2),
-                   gs_read(gs_file1, 3)) %>>% setDT %>>%
-          .[is.na(spec), spec := ""] %>>% return
+        foreach(i = 1 : 3) %do% {
+          gs_read(gs_file1, i) %>>% setDT
+        } %>>% rbindlist(fill = TRUE) %>>% return
       } else {
         options("googlesheets.httr_oauth_cache" = "gs_auth")
         gs_auth(new_user = TRUE)
         gs_file2 <- gs_title(input$googleurl)
-        rbind.fill(gs_read(gs_file2, 1), gs_read(gs_file2, 2),
-                   gs_read(gs_file2, 3)) %>>% setDT %>>%
-          {.[is.na(spec), spec := ""]} %>>% return
+        foreach(j = 1 : 3) %do% {
+          gs_read(gs_file2, j) %>>% setDT
+        } %>>% rbindlist(fill = TRUE) %>>% return
       }
     }
   })
@@ -77,6 +77,7 @@ shinyServer(function(input, output, session) {
     
     # Clean data which enclude processed transactions
     mutatedata <- salesdata[!(訂單狀態 == "已取消" | 訂單狀態 == "已完成")]
+    mutatedata[, 訂單日期 := as.Date(訂單日期)]
     
     # extract the transactions with preorder item
     tmpfile <- mutatedata[, (grepl("預購", 商品名稱) | grepl("預購", 選項)) %>>%
@@ -91,12 +92,16 @@ shinyServer(function(input, output, session) {
     mutatedata[, 商品貨號 := str_replace_all(商品貨號, "\\[.*\\]", "") %>>%
                  trimws]
     arrival <- arrival[as.Date(arrival) <= Sys.Date()]
-    arrival[is.na(spec), spec := ""]
     
     # Launching filtering process
     
     detectlist <- foreach(i = 1 : nrow(arrival)) %do% {
-      mutatedata$商品貨號 %in% arrival$SKU[i]
+      if (is.na(arrival$Start_Date[i]) & is.na(arrival$End_Date[i])) {
+        mutatedata$商品貨號 %in% arrival$SKU[i]
+      } else {
+        (mutatedata$商品貨號 %in% arrival$SKU[i]) & 
+          between(mutatedata$訂單日期, arrival$Start_Date[i], arrival$End_Date[i])
+      }
     }
     foreach(j = seq_along(detectlist)) %do% {
       mutatedata[detectlist[[j]], detection := TRUE]
