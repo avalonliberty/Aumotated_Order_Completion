@@ -80,9 +80,7 @@ shinyServer(function(input, output, session) {
     mutatedata[, 訂單日期 := as.Date(訂單日期)]
     
     # extract the transactions with preorder item
-    tmpfile <- mutatedata[, (grepl("預購", 商品名稱) | grepl("預購", 選項)) %>>%
-                            any , by = 訂單號碼]
-    mutatedata[grepl("現貨", 選項), 這是預購商品嗎. := "Y"]
+    mutatedata[grepl("現貨", 選項), 這是預購商品嗎. := "N"]
     tmpfile <- mutatedata[, (這是預購商品嗎. == "Y") %>>% any, by = 訂單號碼]
     Instocknum <- tmpfile[V1 == FALSE, 訂單號碼] %>>% as.character
     mutatedata <- mutatedata[訂單號碼 %in% tmpfile[V1 == TRUE, 訂單號碼]]
