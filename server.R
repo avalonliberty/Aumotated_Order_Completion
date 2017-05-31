@@ -90,6 +90,8 @@ shinyServer(function(input, output, session) {
     mutatedata[, 商品貨號 := str_replace_all(商品貨號, "\\[.*\\]", "") %>>%
                  trimws]
     arrival <- arrival[as.Date(arrival) <= Sys.Date()]
+    arrival[, `:=`(Start_Date = as.Date(Start_Date),
+                   End_Date = as.Date(End_Date))]
     
     # Launching filtering process
     
