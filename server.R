@@ -10,7 +10,6 @@ library(data.table)
 library(plyr)
 library(pipeR)
 library(foreach)
-library(data.table)
 library(googlesheets)
 library(shinyjs)
 library(stringr)
@@ -22,210 +21,248 @@ shinyServer(function(input, output, session) {
   options(shiny.maxRequestSize = 30 * 1024 ^ 2) 
     
   # Read data in
-  datafile1 <- eventReactive(input$Launch, {
-    inFile1 <- input$mainfile
-    if (is.null (inFile1)) {
+  read_orders_data <- eventReactive(input$filter_execute, {
+    temp_orders_data <- input$orders_data
+    if (is.null (temp_orders_data)) {
       return (NULL)
     } else {
-      coding <- lapply(inFile1$datapath, checkenc) %>>% unlist %>>% unique
-      lapply(inFile1$datapath, function(k) {
-        read.csv(k, fileEncoding = coding, stringsAsFactors = FALSE) 
-      }) %>>% rbind.fill %>>% setDT %>>% return
+      encode <- lapply(temp_orders_data$datapath, checkenc) %>>%
+        unlist %>>%
+        unique
+      lapply(temp_orders_data$datapath, function(k) {
+        read.csv(k, stringsAsFactors = FALSE, fileEncoding = encode) 
+      }) %>>%
+        rbind.fill %>>%
+        setDT %>>%
+        return
     }
   })
   
-  datafile2 <- eventReactive(input$Launch, {
+  read_stocks_arrival <- eventReactive(input$filter_execute, {
     
     # Considering the situtation that input$google is No
-    if (input$google == "No") {
-      inFile2 <- input$supportfile
-      if (is.null (inFile2)) {
+    if (input$use_googleSheet == "No") {
+      temp_stocks_arrival <- input$stocks_arrival
+      if (is.null (temp_stocks_arrival)) {
         return(NULL)
       } else {
-        FileCoding <- checkenc(inFile2$datapath)
-        read.csv(inFile2$datapath, fileEncoding = FileCoding,
+        encode <- checkenc(temp_stocks_arrival$datapath)
+        read.csv(temp_stocks_arrival$datapath, fileEncoding = encode,
                  stringsAsFactors = FALSE) %>>% return
       }
-    }
-    
-    # Considering the situation that input$google is Yes
-    else if (input$google == "Yes") {
-      if (is.null (input$googleurl)) {
+      
+      # Considering the situation that input$google is Yes
+    } else if (input$use_googleSheet == "Yes") {
+      if (is.null (input$googleSheet_url)) {
         return (NULL)
-      } else if (grepl("^https", input$googleurl)) {
-        options("googlesheets.httr_oauth_cache" = "gs_auth")
-        gs_auth(new_user = TRUE)
-        gs_file1 <- gs_url(input$googleurl)
-        foreach(i = 1 : 3) %do% {
-          gs_read(gs_file1, i) %>>% setDT
-        } %>>% rbindlist(fill = TRUE) %>>% return
-      } else {
-        options("googlesheets.httr_oauth_cache" = "gs_auth")
-        gs_auth(new_user = TRUE)
-        gs_file2 <- gs_title(input$googleurl)
-        foreach(j = 1 : 3) %do% {
-          gs_read(gs_file2, j) %>>% setDT
-        } %>>% rbindlist(fill = TRUE) %>>% return
+        } else if (grepl("^https", input$googleSheet_url)) {
+          options("googlesheets.httr_oauth_cache" = "gs_auth")
+          gs_auth(new_user = TRUE)
+          gs_file_by_url <- gs_url(input$googleSheet_url)
+          foreach(i = 1 : 3) %do% {
+            gs_read(gs_file_by_url, i) %>>% setDT
+            } %>>%
+            rbindlist(fill = TRUE) %>>%
+            return
+          } else {
+            options("googlesheets.httr_oauth_cache" = "gs_auth")
+            gs_auth(new_user = TRUE)
+            gs_file_by_title <- gs_title(input$googleSheet_url)
+            foreach(j = 1 : 3) %do% {
+              gs_read(gs_file_by_title, j) %>>% setDT
+              } %>>%
+              rbindlist(fill = TRUE) %>>%
+              return
+          }
       }
-    }
-  })
+    })
   
   # Manipulating on AOC procedure
-  zoopy <- reactive({
-    salesdata <- datafile1() %>>% setDT
-    arrival <- datafile2() %>>% setDT
+  manipulated_file <- reactive({
+    processed_orders_data <- read_orders_data() %>>% setDT
+    processed_stocks_arrival <- read_stocks_arrival() %>>% setDT
     
     # Clean data which enclude processed transactions
-    mutatedata <- salesdata[!(訂單狀態 == "已取消" | 訂單狀態 == "已完成")]
-    mutatedata[, 訂單日期 := as.Date(訂單日期)]
+    file_under_AOC <- processed_orders_data %>>%
+      `[`(i = !(訂單狀態 == "已取消" | 訂單狀態 == "已完成"))
+    file_under_AOC[, 訂單日期 := as.Date(訂單日期)]
     
     # extract the transactions with preorder item
-    mutatedata[grepl("現貨", 選項), 這是預購商品嗎. := "N"]
-    tmpfile <- mutatedata[, (這是預購商品嗎. == "Y") %>>% any, by = 訂單號碼]
-    Instocknum <- tmpfile[V1 == FALSE, 訂單號碼] %>>% as.character
-    mutatedata <- mutatedata[訂單號碼 %in% tmpfile[V1 == TRUE, 訂單號碼]]
+    file_under_AOC[grepl("現貨", 選項), 預購商品 := "N"]
+    tmpfile <- file_under_AOC[, (預購商品 == "Y") %>>% any, by = 訂單號碼]
+    ready_order_number <- tmpfile[V1 == FALSE, 訂單號碼] %>>% as.character
+    file_under_AOC <- file_under_AOC %>>%
+      `[`(訂單號碼 %in% tmpfile[V1 == TRUE, 訂單號碼])
     
     # Starting to judge if the preorder item have arrived
-    mutatedata[這是預購商品嗎. == "N", detection := TRUE]
-    mutatedata[, 商品貨號 := str_replace_all(商品貨號, "\\[.*\\]", "") %>>%
-                 trimws]
-    arrival <- arrival[as.Date(arrival) <= Sys.Date()]
-    arrival[, `:=`(Start_Date = as.Date(Start_Date),
-                   End_Date = as.Date(End_Date))]
+    file_under_AOC[預購商品 == "N", detection := TRUE]
+    file_under_AOC %>>%
+      `[`(j = 商品貨號 := str_replace_all(商品貨號, "\\[.*\\]", "") %>>% trimws)
+    processed_stocks_arrival <- processed_stocks_arrival %>>% 
+      `[`(as.Date(arrival) <= Sys.Date())
+    processed_stocks_arrival[, `:=`(Start_Date = as.Date(Start_Date),
+                                    End_Date = as.Date(End_Date))]
+    processed_stocks_arrival %>>% 
+      `[`(j = SKU := str_replace_all(SKU, "\\[.*\\]", "") %>>% trimws)
     
     # Launching filtering process
-    
-    detectlist <- foreach(i = 1 : nrow(arrival)) %do% {
-      if (is.na(arrival$Start_Date[i]) & is.na(arrival$End_Date[i])) {
-        mutatedata$商品貨號 %in% arrival$SKU[i]
+    detectlist <- foreach(i = 1 : nrow(processed_stocks_arrival)) %do% {
+      if (is.na(processed_stocks_arrival$Start_Date[i]) &
+          is.na(processed_stocks_arrival$End_Date[i])) {
+        file_under_AOC$商品貨號 %in% processed_stocks_arrival$SKU[i]
       } else {
-        (mutatedata$商品貨號 %in% arrival$SKU[i]) & 
-          between(mutatedata$訂單日期, arrival$Start_Date[i], arrival$End_Date[i])
+        (file_under_AOC$商品貨號 %in% processed_stocks_arrival$SKU[i]) & 
+          between(file_under_AOC$訂單日期,
+                  processed_stocks_arrival$Start_Date[i],
+                  processed_stocks_arrival$End_Date[i])
       }
     }
+    
     foreach(j = seq_along(detectlist)) %do% {
-      mutatedata[detectlist[[j]], detection := TRUE]
+      file_under_AOC[detectlist[[j]], detection := TRUE]
     }
-    mutatedata[is.na(detection), detection := FALSE]
-    tmpfile <- mutatedata[, all(detection), 訂單號碼]
+    
+    file_under_AOC[is.na(detection), detection := FALSE]
+    tmpfile <- file_under_AOC[, all(detection), 訂單號碼]
     bookingID <- tmpfile[V1 == TRUE, 訂單號碼] %>>% as.character
-    ReadyToGo <- c(bookingID, Instocknum)
-    salesdata[訂單號碼 %in% ReadyToGo] %>>% return
+    ReadyToGo <- c(bookingID, ready_order_number)
+    processed_orders_data[訂單號碼 %in% ReadyToGo] %>>% return
   })
   
   # Design delivery filtering UI
-  output$AdditionalSelect1 <- renderUI({
-    manipulation <- zoopy()
-    deliverymethod <- manipulation$送貨方式 %>>% as.factor %>>% levels %>>% 
+  output$delivery_UI <- renderUI({
+    manipulation <- manipulated_file()
+    deliveryMethod <- manipulation$送貨方式 %>>%
+      as.factor %>>%
+      levels %>>% 
       { c("", .) }
-    selectInput("delivery", "送貨方式", choices = deliverymethod)
+    selectInput("delivery_method", "送貨方式", choices = deliveryMethod)
   })
   
   # Design payment status filtering UI
-  output$AdditionalSelect2 <- renderUI({
-    manipulation <- zoopy()
-    paymentstatus <- manipulation$付款狀態 %>>% as.factor %>>% levels %>>%
+  output$payment_UI <- renderUI({
+    manipulation <- manipulated_file()
+    paymentStatus <- manipulation$付款狀態 %>>%
+      as.factor %>>%
+      levels %>>%
       { c("", .) }
-    selectInput("payment", "付款狀態", choices = paymentstatus)
+    selectInput("payment_status", "付款狀態", choices = paymentStatus)
   })
   
   # Design order status filtering UI
-  output$AdditionalSelect3 <- renderUI({
-    manipulation <- zoopy()
-    orderstatus <- manipulation$訂單狀態 %>>% as.factor %>>% levels %>>%
-     { c("", .) }
-    selectInput("order", "訂單狀態", choices = orderstatus)
+  output$orders_status_UI <- renderUI({
+    manipulation <- manipulated_file()
+    orderStatus <- manipulation$訂單狀態 %>>%
+      as.factor %>>%
+      levels %>>%
+      { c("", .) }
+    selectInput("orders_status", "訂單狀態", choices = orderStatus)
   })
   
   # Filtering the column designed above
-  zookeeper <- reactive({
-    issac <- zoopy()
-    delivery <- ifelse(input$delivery == "", "", "送貨方式 == input$delivery")
-    payment <- ifelse(input$payment == "", "", "付款狀態 == input$payment")
-    order <- ifelse(input$order == "", "", "訂單狀態 == input$order")
-    if (delivery == "" & payment == "" & order == "") {
-      return (issac)
+  payment_delivery_filtered_data <- reactive({
+    temp_payment_delivery_filtering_data <- manipulated_file()
+    delivery_method <- ifelse(input$delivery_method == "", "",
+                              "送貨方式 == input$delivery_method")
+    payment_status <- ifelse(input$payment_status == "", "",
+                             "付款狀態 == input$payment_status")
+    orders_status <- ifelse(input$orders_status == "", "",
+                            "訂單狀態 == input$orders_status")
+    if (delivery_method == "" & payment_status == "" & orders_status == "") {
+      return (temp_payment_delivery_filtering_data)
     } else {
-      dvec <- c(delivery, payment, order) %>>% {.[!. == ""]} %>>%
+      dvec <- c(delivery_method, payment_status, orders_status) %>>%
+        {.[!. == ""]} %>>%
         paste(collapse = "&")
-      issac[parse(text = dvec) %>>% eval] %>>% return
+      temp_payment_delivery_filtering_data %>>%
+        `[`(parse(text = dvec) %>>% eval) %>>%
+        return
     }
   })
   
   # Filtering total value of every ordering
-  desertcamal <- reactive({
-    skt1bengi <- zookeeper()
-    relation1 <- paste("合計", input$relationship1, input$value1)
-    if (input$relationship1 != "" & input$value1 != "") {
-      skt1bengi[, 合計 := first(合計), 訂單號碼]
-      skt1bengi[parse(text = relation1) %>>% eval] %>>% return
+  totalAmount_filtered_data <- reactive({
+    temp_total_filtering_Data <- payment_delivery_filtered_data()
+    totalAmount_filtering <- paste("訂單合計", input$totalAmount_filtering,
+                                   input$totalAmount_threshold)
+    if (input$totalAmount_filtering != "" &
+        input$totalAmount_threshold != "") {
+      temp_total_filtering_Data[, 訂單合計 := first(訂單合計), 訂單號碼]
+      temp_total_filtering_Data %>>%
+        `[`(parse(text = totalAmount_filtering) %>>% eval) %>>%
+        return
     } else {
-      return (skt1bengi)
+      return (temp_total_filtering_Data)
     }
   })
   
   # Filtering ordering item number
-  milktea <- reactive({
-    faker <- desertcamal()
-    relation2 <- paste(".N", input$relationship2, input$value2)
-    if (input$relationship2 != "" & input$value2 != "") {
-      tempnumber<- faker[, parse(text = relation2) %>>% eval, 訂單號碼] %>>% 
+  frequencies_filtered_data <- reactive({
+    temp_frequencies_filtering_data <- totalAmount_filtered_data()
+    frequencies_filtering <- paste(".N", input$frequencies_filtering,
+                                   input$frequencies_threshold)
+    if (input$frequencies_filtering != "" &
+        input$frequencies_threshold != "") {
+      tempnumber <- temp_frequencies_filtering_data %>>%
+        #problem point
+        `[`(i = parse(text = frequencies_filtering) %>>% eval, 訂單號碼) %>>% 
         {.[V1 == TRUE, 訂單號碼] }
-      faker[訂單號碼 %in% tempnumber] %>>% return
+      temp_frequencies_filtering_data[訂單號碼 %in% tempnumber] %>>% return
     } else {
-      return (faker)
+      return (temp_frequencies_filtering_data)
     }  
   })
   
   # Filtering itemname and specifications
-  blackmonkey <- reactive({
-    greentea <- milktea()
-    if (input$value3 != "" | input$value4 != "") {
-      blacktea <- greentea[, (grepl(input$value3, 商品名稱) & 
-                              grepl(input$value4, 選項)) %>>% any, 訂單號碼] 
-      greentea[訂單號碼 %in% blacktea[V1 == TRUE, 訂單號碼]] %>>% return
+  itemNameSpec_filtered_data <- reactive({
+    temp_itemNameSpec_filtering_data <- frequencies_filtered_data()
+    if (input$product_name_threshold != "" |
+        input$product_spec_threshold != "") {
+      temp_selection <- temp_itemNameSpec_filtering_data %>>% 
+        `[`(i = (grepl(input$product_name_threshold, 商品名稱) & 
+                 grepl(input$product_spec_threshold, 選項)) %>>% any, 訂單號碼) 
+      temp_itemNameSpec_filtering_data %>>% 
+        `[`(訂單號碼 %in% temp_selection[V1 == TRUE, 訂單號碼]) %>>% return
     } else {
-      return (greentea)
+      return (temp_itemNameSpec_filtering_data)
     } 
   })
   
   # Reseting parameter by reset function with shinyjs package
-  observeEvent(input$resetparameter, {
-    reset("filtering")
-    reset("delivery")
-    reset("order")
-    reset("payment")
+  observeEvent(input$reset_parameter, {
+    reset("filtering_setting")
+    reset("delivery_method")
+    reset("orders_status")
+    reset("payment_status")
   })
   
   # Deciding output form
-  hokaido <- reactive({
-    if (input$elaboration == "簡易輸出") {
-      outputselect <- blackmonkey()
-      bookingidvector <- unique(outputselect$訂單號碼)
-      data.table(ID = seq_along(bookingidvector),
-                 BookingID = bookingidvector) %>>% return
+  ready_output_file <- reactive({
+    if (input$output_file_type == "簡易輸出") {
+      simple_output_data <- itemNameSpec_filtered_data()
+      orders_ID <- unique(simple_output_data$訂單號碼)
+      data.table(ID = seq_along(orders_ID),
+                 orderID = orders_ID) %>>% return
     } else {
-      gugudan <- blackmonkey()
-      gugudan <- gugudan[, .SD[1], 訂單號碼]
-      gugudan[, c("訂單號碼", "訂單日期", "電郵", "電話號碼", "送貨方式",
-                  "送貨狀態","付款狀態", "合計", "收件人", "地址.1", "地址.2",
-                  "城市", "訂單備註", "郵政編號.如適用.", "門市名稱", 
-                  "全家服務編號...7.11.店號"), with = FALSE] %>>% return
+      intact_output_data <- itemNameSpec_filtered_data()
+      intact_output_data <- intact_output_data[, .SD[1], 訂單號碼]
+      return(intact_output_data)
     }
   })
   
   # Output final result
-  output$pikachu <- renderDataTable({
-    hokaido()
+  output$output_document <- renderDataTable({
+    ready_output_file()
   })
   
   # Handling download file
-  output$Gotit <- downloadHandler(
+  output$download_file <- downloadHandler(
     filename = function() { 
       paste('CompletedOrder', 'csv', sep='.') 
     },
     content = function(file) {
-      write.csv(hokaido(), file, row.names = FALSE, fileEncoding = "big5")
+      write.csv(ready_output_file(), file, row.names = FALSE,
+                fileEncoding = "big5")
     }
   )
 })
